@@ -125,11 +125,6 @@
       "id": "metacore",
       "versionRange": "^1.0.3",
       "additionalData": {}
-    },
-    {
-      "id": "web-utils",
-      "versionRange": "^1.1.0",
-      "additionalData": {}
     }
   ]
 }

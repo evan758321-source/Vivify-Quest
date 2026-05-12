@@ -15,7 +15,6 @@
 #include <vector>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/BeatmapCallbacksController.hpp"
 #include "GlobalNamespace/BpmController.hpp"
@@ -75,8 +74,6 @@
 #include "tracks/shared/AssociatedData.h"
 #include "tracks/shared/Constants.h"
 #include "tracks/shared/StaticHolders.hpp"
-#include "web-utils/shared/WebUtils.hpp"
-#include "bsml/shared/BSML/MainThreadScheduler.hpp"
 #include "metacore/shared/game.hpp"
 #include "beatsaber-hook/shared/config/rapidjson-utils.hpp"
 using namespace std::string_view_literals;
@@ -646,46 +643,8 @@ private:
         }
       }
       if (!bundleExists) {
-        uint32_t androidChecksum = 0;
-        std::string infoPath = JoinPath(_selectedLevelPath, "Info.dat");
-        if (!std::filesystem::exists(infoPath)) infoPath = JoinPath(_selectedLevelPath, "info.dat");
-        if (std::filesystem::exists(infoPath)) {
-          std::ifstream ifs(infoPath);
-          if (!ifs.is_open()) return;
-          std::string str((std::istreambuf_iterator<char>(ifs)), (std::istreambuf_iterator<char>()));
-          rapidjson::Document doc;
-          doc.Parse(str.c_str());
-          if (!doc.HasParseError()) {
-            rapidjson::Value const* customData = nullptr;
-            if (doc.HasMember("_customData")) customData = &doc["_customData"];
-            else if (doc.HasMember("customData")) customData = &doc["customData"];
-            if (customData && customData->IsObject()) {
-              rapidjson::Value const* assetBundle = nullptr;
-              if (customData->HasMember("_assetBundle")) assetBundle = &(*customData)["_assetBundle"];
-              else if (customData->HasMember("assetBundle")) assetBundle = &(*customData)["assetBundle"];
-              if (assetBundle && assetBundle->IsObject()) {
-                if (assetBundle->HasMember("_android2021") && (*assetBundle)["_android2021"].IsUint()) {
-                  androidChecksum = (*assetBundle)["_android2021"].GetUint();
-                } else if (assetBundle->HasMember("android2021") && (*assetBundle)["android2021"].IsUint()) {
-                  androidChecksum = (*assetBundle)["android2021"].GetUint();
-                }
-              }
-            }
-          }
-        }
-        if (androidChecksum != 0) {
-          SongCore::API::PlayButton::DisablePlayButton("Vivify", "Downloading assets...");
-          DownloadBundle(androidChecksum, _selectedLevelPath, [this, bundlePath](bool success) {
-            if (success) {
-              _selectedBundlePath = bundlePath;
-              SongCore::API::PlayButton::EnablePlayButton("Vivify");
-            } else {
-              SongCore::API::PlayButton::DisablePlayButton("Vivify", "Failed to download assets.");
-            }
-          });
-        } else {
-          SongCore::API::PlayButton::DisablePlayButton("Vivify", "This map does not support your game version.");
-        }
+        SongCore::API::PlayButton::DisablePlayButton(
+            "Vivify", "Missing Android 2021 asset bundle (bundleAndroid2021.vivify).");
       } else {
         _selectedBundlePath = bundlePath;
         SongCore::API::PlayButton::EnablePlayButton("Vivify");
@@ -694,41 +653,6 @@ private:
       MetaCore::Game::SetScoreSubmission("Vivify", true);
       SongCore::API::PlayButton::EnablePlayButton("Vivify");
     }
-  }
-  void DownloadBundle(uint32_t checksum, std::string const& levelPath, std::function<void(bool)> callback) {
-    std::string url = "https://repo.totalbs.dev/api/v1/bundles/" + std::to_string(checksum);
-    std::string bundlePath = JoinPath(levelPath, kBundleFile);
-    WebUtils::GetAsync<WebUtils::StringResponse>(WebUtils::URLOptions(url), [bundlePath, callback](WebUtils::StringResponse res) {
-      if (res.IsSuccessful() && res.responseData.has_value()) {
-        rapidjson::Document doc;
-        doc.Parse(res.responseData->c_str());
-        if (!doc.HasParseError() && doc.HasMember("downloadUrl") && doc["downloadUrl"].IsString()) {
-          std::string downloadUrl = doc["downloadUrl"].GetString();
-          WebUtils::GetAsync<WebUtils::DataResponse>(WebUtils::URLOptions(downloadUrl), [bundlePath, callback](WebUtils::DataResponse dataRes) {
-            if (dataRes.IsSuccessful() && dataRes.responseData.has_value()) {
-              std::ofstream os(bundlePath, std::ios::binary);
-              os.write((char*)dataRes.responseData->data(), dataRes.responseData->size());
-              os.close();
-              BSML::MainThreadScheduler::Schedule([callback]{
-                callback(true);
-              });
-            } else {
-              BSML::MainThreadScheduler::Schedule([callback]{
-                callback(false);
-              });
-            }
-          });
-        } else {
-          BSML::MainThreadScheduler::Schedule([callback]{
-            callback(false);
-          });
-        }
-      } else {
-        BSML::MainThreadScheduler::Schedule([callback]{
-          callback(false);
-        });
-      }
-    });
   }
   void HandleCustomEvent(GlobalNamespace::BeatmapCallbacksController* callbackController,
                          CustomJSONData::CustomEventData* customEventData) {
