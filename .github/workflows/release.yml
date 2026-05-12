@@ -25,8 +25,8 @@ jobs:
       - name: Install QPM
         shell: bash
         run: |
-          rustup update stable
-          cargo install --locked --git https://github.com/QuestPackageManager/QPM.CLI --tag v1.5.9 qpm_cli
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install --locked --git https://github.com/QuestPackageManager/QPM.CLI --tag v1.5.9 qpm_cli
           qpm --version
 
       - name: Restore Quest dependencies
