@@ -15,6 +15,7 @@
 #include <vector>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/BeatmapCallbacksController.hpp"
 #include "GlobalNamespace/BpmController.hpp"
@@ -241,9 +242,26 @@ bool IsSupportedEvent(std::string_view type) {
 }
 std::string NormalizeAssetKey(std::string_view input) {
   std::string key(input);
+  std::replace(key.begin(), key.end(), '\\', '/');
   std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
   });
+  return key;
+}
+std::string AssetLookupName(std::string_view input) {
+  std::string key = NormalizeAssetKey(input);
+  auto slash = key.find_last_of('/');
+  if (slash != std::string::npos) {
+    key.erase(0, slash + 1);
+  }
+  return key;
+}
+std::string AssetLookupStem(std::string_view input) {
+  std::string key = AssetLookupName(input);
+  auto dot = key.find_last_of('.');
+  if (dot != std::string::npos) {
+    key.erase(dot);
+  }
   return key;
 }
 std::string JoinPath(std::string_view left, std::string_view right) {
@@ -395,7 +413,8 @@ public:
   bool IsResetting() const { return _isResetting; }
   AssignedPrefabInfo* FindAssignedPrefab(std::string_view objectType, GlobalNamespace::NoteData* noteData) {
     if (noteData == nullptr) return nullptr;
-    auto* customNoteData = il2cpp_utils::cast<CustomJSONData::CustomNoteData>(noteData);
+    auto* customNoteData = il2cpp_utils::try_cast<CustomJSONData::CustomNoteData>(noteData).value_or(nullptr);
+    if (customNoteData == nullptr || customNoteData->customData == nullptr) return nullptr;
     auto& ad = TracksAD::getAD(customNoteData->customData);
     if (ad.tracks.empty()) return nullptr;
     for (auto& info : _assignedPrefabs) {
@@ -602,6 +621,7 @@ private:
   void HandleLevelSelected(SongCore::API::LevelSelect::LevelWasSelectedEventArgs const& event) {
     ResetRuntime();
     _selectedLevelPath.clear();
+    _selectedBundlePath.clear();
     _selectedMapHasVivifyRequirement = false;
     if (!event.isCustom || event.customBeatmapLevel == nullptr) {
       SongCore::API::PlayButton::EnablePlayButton("Vivify");
@@ -655,8 +675,9 @@ private:
         }
         if (androidChecksum != 0) {
           SongCore::API::PlayButton::DisablePlayButton("Vivify", "Downloading assets...");
-          DownloadBundle(androidChecksum, _selectedLevelPath, [this](bool success) {
+          DownloadBundle(androidChecksum, _selectedLevelPath, [this, bundlePath](bool success) {
             if (success) {
+              _selectedBundlePath = bundlePath;
               SongCore::API::PlayButton::EnablePlayButton("Vivify");
             } else {
               SongCore::API::PlayButton::DisablePlayButton("Vivify", "Failed to download assets.");
@@ -666,6 +687,7 @@ private:
           SongCore::API::PlayButton::DisablePlayButton("Vivify", "This map does not support your game version.");
         }
       } else {
+        _selectedBundlePath = bundlePath;
         SongCore::API::PlayButton::EnablePlayButton("Vivify");
       }
     } else {
@@ -751,7 +773,7 @@ private:
       HandleAssignObjectPrefab(customEventData, *json);
     }
   }
-  void 
+  void RememberUnsupportedEventWarning(std::string const& key) {
     if (_unsupportedEventWarnings.contains(key)) {
       return;
     }
@@ -873,7 +895,14 @@ private:
       }
       return;
     }
-    std::string bundlePath = JoinPath(_selectedLevelPath, kBundleFile);
+    std::string bundlePath = _selectedBundlePath.empty() ? JoinPath(_selectedLevelPath, kBundleFile) : _selectedBundlePath;
+    if (!std::filesystem::exists(bundlePath)) {
+      std::string lowerBundlePath = JoinPath(_selectedLevelPath, "bundleandroid2021.vivify");
+      if (std::filesystem::exists(lowerBundlePath)) {
+        bundlePath = lowerBundlePath;
+        _selectedBundlePath = lowerBundlePath;
+      }
+    }
     _mainBundle = UnityEngine::AssetBundle::LoadFromFile(StringW(bundlePath));
     if (_mainBundle == nullptr) {
       if (_selectedMapHasVivifyRequirement) {
@@ -893,8 +922,19 @@ private:
     }
   }
   UnityEngine::Object* GetAssetObject(std::string_view assetName) const {
-    auto it = _assets.find(NormalizeAssetKey(assetName));
-    return it == _assets.end() ? nullptr : it->second;
+    std::string normalized = NormalizeAssetKey(assetName);
+    auto it = _assets.find(normalized);
+    if (it != _assets.end()) {
+      return it->second;
+    }
+    std::string lookupName = AssetLookupName(assetName);
+    std::string lookupStem = AssetLookupStem(assetName);
+    for (auto const& [key, asset] : _assets) {
+      if (AssetLookupName(key) == lookupName || AssetLookupStem(key) == lookupStem) {
+        return asset;
+      }
+    }
+    return nullptr;
   }
   template <typename T>
   T* GetAssetAs(std::string_view assetName) const {
@@ -1451,10 +1491,10 @@ private:
     }
     float duration = DurationBeatsToSeconds(ReadFloat(json, "duration").value_or(0.0f));
     Functions easing = ParseEasing(ReadStringView(json, "easing").value_or("easeLinear"sv));
-    float startTime = customEventData->time;
+    float currentSongTime = CurrentSongTime();
+    float startTime = currentSongTime;
     std::vector<MaterialPropertyChange> animatedProperties;
     animatedProperties.reserve(properties.size());
-    float currentSongTime = CurrentSongTime();
     bool completed = duration <= 0.0f || startTime + duration <= currentSongTime;
     float initialProgress = completed ? 1.0f : 0.0f;
     for (auto const& property : properties) {
@@ -1488,10 +1528,10 @@ private:
     }
     float duration = DurationBeatsToSeconds(ReadFloat(json, "duration").value_or(0.0f));
     Functions easing = ParseEasing(ReadStringView(json, "easing").value_or("easeLinear"sv));
-    float startTime = customEventData->time;
+    float currentSongTime = CurrentSongTime();
+    float startTime = currentSongTime;
     std::vector<AnimatorPropertyChange> animatedProperties;
     animatedProperties.reserve(properties.size());
-    float currentSongTime = CurrentSongTime();
     bool completed = duration <= 0.0f || startTime + duration <= currentSongTime;
     float initialProgress = completed ? 1.0f : 0.0f;
     for (auto const& property : properties) {
@@ -1517,10 +1557,10 @@ private:
     }
     float duration = DurationBeatsToSeconds(ReadFloat(json, "duration").value_or(0.0f));
     Functions easing = ParseEasing(ReadStringView(json, "easing").value_or("easeLinear"sv));
-    float startTime = customEventData->time;
+    float currentSongTime = CurrentSongTime();
+    float startTime = currentSongTime;
     std::vector<MaterialPropertyChange> animatedProperties;
     animatedProperties.reserve(properties.size());
-    float currentSongTime = CurrentSongTime();
     bool completed = duration <= 0.0f || startTime + duration <= currentSongTime;
     float initialProgress = completed ? 1.0f : 0.0f;
     for (auto const& property : properties) {
@@ -1640,6 +1680,7 @@ private:
   TracksAD::BeatmapAssociatedData _fallbackBeatmapAD;
   UnityEngine::AssetBundle* _mainBundle = nullptr;
   std::string _selectedLevelPath;
+  std::string _selectedBundlePath;
   bool _selectedMapHasVivifyRequirement = false;
   std::unordered_map<std::string, UnityEngine::Object*> _assets;
   std::unordered_map<CustomJSONData::CustomEventData*, InstantiatePrefabData> _instantiatePrefabs;
