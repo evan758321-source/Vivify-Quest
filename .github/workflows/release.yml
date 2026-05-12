@@ -29,11 +29,18 @@ jobs:
           cargo +nightly install --locked --git https://github.com/QuestPackageManager/QPM.CLI --tag v1.5.9 qpm_cli
           qpm --version
 
+      - name: Install build tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+          cmake --version
+          ninja --version
+
       - name: Restore Quest dependencies
         shell: bash
         run: |
           qpm ndk resolve -d
-          qpm download cmake/ninja
           qpm restore
 
       - name: Build QMOD
