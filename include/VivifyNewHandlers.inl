@@ -11,8 +11,8 @@ void HandleBlit(CustomJSONData::CustomEventData* customEventData, rapidjson::Val
     if (!properties.empty()) {
       float dur = DurationBeatsToSeconds(ReadFloat(json, "duration").value_or(0.0f));
       Functions eas = ParseEasing(ReadStringView(json, "easing").value_or("easeLinear"));
-      float st = customEventData->time;
       float cur = CurrentSongTime();
+      float st = cur;
       bool done = dur <= 0.0f || st + dur <= cur;
       float prog = done ? 1.0f : 0.0f;
       for (auto const& p : properties) ApplyMaterialProperty(material, p, prog);
@@ -51,8 +51,8 @@ void HandleBlit(CustomJSONData::CustomEventData* customEventData, rapidjson::Val
   if (duration == 0) {
     bd.frame = static_cast<int>(UnityEngine::Time::get_frameCount());
     effects.push_back(ActiveBlitEffect{bd, 0.0f});
-  } else if (duration > 0 && songTime <= customEventData->time + duration) {
-    effects.push_back(ActiveBlitEffect{bd, customEventData->time + duration});
+  } else if (duration > 0) {
+    effects.push_back(ActiveBlitEffect{bd, songTime + duration});
   }
 }
 void UpdateBlitEffects() {
@@ -186,8 +186,8 @@ void HandleSetRenderingSettings(CustomJSONData::CustomEventData* customEventData
                                 rapidjson::Value const& json) {
   float duration = DurationBeatsToSeconds(ReadFloat(json, "duration").value_or(0.0f));
   Functions easing = ParseEasing(ReadStringView(json, "easing").value_or("easeLinear"));
-  float startTime = customEventData->time;
   float songTime = CurrentSongTime();
+  float startTime = songTime;
   bool noDuration = duration <= 0.0f || startTime + duration <= songTime;
   std::vector<RenderSettingValue> settings;
   auto* rsVal = ReadValuePtr(json, "renderSettings");

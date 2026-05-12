@@ -1,0 +1,67 @@
+name: Build QMOD
+
+'on':
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Quest mod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install QPM
+        shell: bash
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install --locked --git https://github.com/QuestPackageManager/QPM.CLI --tag v1.5.9 qpm_cli
+          qpm --version
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+          cmake --version
+          ninja --version
+
+      - name: Restore Quest dependencies
+        shell: bash
+        run: |
+          qpm ndk resolve -d
+          qpm restore
+
+      - name: Build QMOD
+        shell: bash
+        run: qpm s qmod
+
+      - name: Upload QMOD artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vivify-qmod
+          path: Vivify.qmod
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" Vivify.qmod --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" Vivify.qmod --generate-notes --title "${GITHUB_REF_NAME}"
+          fi
